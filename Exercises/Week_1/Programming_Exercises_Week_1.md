@@ -132,6 +132,10 @@ Where `color_mapping` enables to plot the latent variables projected on the late
 
 The command `vae_bernoulli.py color-map --device mps --latent-dim 10 --model model.pt --batch-size 128` leads to the following figure :
 
+![Color mapping](Color_mapping_1.5.png)
+
+## Exercise 1.6
+
 
 
 
