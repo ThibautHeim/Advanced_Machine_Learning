@@ -13,6 +13,7 @@ def color_mapping(Latent_variables, Labels, requirement = None):
             if label in requirement :
                 axs.scatter(masked_Latent[:,0], masked_Latent[:,1], alpha=0.7, s=6, c=colors[label], label=label)
     axs.legend(loc='upper right')
+    axs.set_title("Latent variables projected on the 2 principal components for different labels", fontweight='bold', fontsize = 10)
     plt.show()
 
 

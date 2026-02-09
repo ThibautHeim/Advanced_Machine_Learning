@@ -83,5 +83,57 @@ Implement it such that you, for latent dimensions larger than two, M > 2, do
 PCA and project the sample onto the first two principal components (e.g., using
 scikit-learn).
 
+For this part we added the method `aggregated_posterior_sample` to the class `VAE` : 
+```
+ def aggregated_posterior_sample(self, batch_x):
+        # Aggregate posterior from this datapoint :
+        q = self.encoder(batch_x)
+        # Sample from the aggregate posterior, no need for reparametrisation trick here since we are not doing backpropagation 
+        z = q.sample()
+        
+        return z # z Batch-size tensor of latent data, every data point is represented by a latent vector z sampled from an independant distribution thanks to td.Independant
+```
+And we added the possible argument `"color-map"` for the mode in the parser. If this new mode is chosen, the following code activates :
+
+``` 
+elif args.mode == "color-map" :
+        # Loading mnist test-set
+        model.load_state_dict(torch.load(args.model, map_location=torch.device(args.device)))
+        model.eval()
+
+        Latent_variables = []
+        Labels = []
+        for batch_x, batch_label in mnist_test_loader :
+            if batch_label.shape == torch.Size([128]) :
+                # Sample from aggregated posterior
+                batch_x = batch_x.to(device)
+                z = model.aggregated_posterior_sample(batch_x)
+                Latent_variables.append(z)
+                Labels.append(batch_label)
+        
+        Labels = torch.flatten(torch.stack(Labels)).numpy()
+        Latent_variables = torch.flatten(torch.stack(Latent_variables),end_dim=-2)
+
+        # Perform PCA on the latent variables
+        pca = PCA(n_components=2)
+        Latent_variables = Latent_variables.cpu().numpy()
+        pca.fit(Latent_variables)
+
+        # Project the latent variables on the pca space
+        transformed_latent = pca.transform(Latent_variables) 
+
+        # Explained variance
+        print("Explained variance from the pca on the latent variables : ", pca.explained_variance_ratio_)
+
+        color_mapping(transformed_latent, Labels)
+```
+
+Where `color_mapping` enables to plot the latent variables projected on the latent space with different color for every label.
+
+The command `vae_bernoulli.py color-map --device mps --latent-dim 10 --model model.pt --batch-size 128` leads to the following figure :
+
+
+
+
 
 
