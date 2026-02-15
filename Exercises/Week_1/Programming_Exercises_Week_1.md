@@ -8,7 +8,7 @@ Answer the following questions:
 >* How is the reparametrisation trick handled in the code?
 
 The reparametrisation trick is handled when sampling z from the distribution $q(x| \phi )$ only noted $q$ in the code and learned using Gaussian encoder class.  
-This sampling is done in the $elbo$ function within the $VAE$ class
+This sampling is done in the $elbo$ function within the $VAE$ class ;
 
 
 ``` 

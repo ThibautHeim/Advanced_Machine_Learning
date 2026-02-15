@@ -110,6 +110,6 @@ class Chequerboard:
 
 if __name__ == "__main__":
     # Illustrate how to make a DataLoader using the Checkerboard class
-    toy = Chequerboard()
+    toy = TwoGaussians()
     loader = torch.utils.data.DataLoader(toy().sample((1000000,)), batch_size=1000, shuffle=True)
     print(next(iter(loader)).shape)
