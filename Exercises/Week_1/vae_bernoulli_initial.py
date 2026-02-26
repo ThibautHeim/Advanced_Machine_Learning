@@ -176,9 +176,9 @@ def train(model, optimizer, data_loader, epochs, device):
             loss.backward()
             optimizer.step()
 
-            # Update progress bar
-            progress_bar.set_postfix(loss=f"⠀{loss.item():12.4f}", epoch=f"{epoch+1}/{epochs}")
-            progress_bar.update()
+        # Update progress bar
+        progress_bar.set_postfix(loss=f"⠀{loss.item():12.4f}", epoch=f"{epoch+1}/{epochs}")
+        progress_bar.update()
 
 
 if __name__ == "__main__":
