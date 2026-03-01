@@ -585,7 +585,7 @@ if __name__ == "__main__":
 
 
     else : 
-        print("On ne rentre dans aucun if/elif", flush=True)
+        print("Error with mode", flush=True)
         
 
     
