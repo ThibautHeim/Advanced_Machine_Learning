@@ -4,5 +4,6 @@ Adv_ML_env/
 *.pdf
 *.pt
 *.json
+*.png
 Models/
 Samples/
