@@ -14,7 +14,46 @@ from tqdm import tqdm
 # Other imported modules (exercises)
 from sklearn.decomposition import PCA
 import numpy as np
+from math import floor
+import json
 
+# Flow related classes
+from flow import MaskedCouplingLayer, Flow
+
+
+
+
+
+
+class GaussianBase(nn.Module): # p(z) = N(0, I)
+    def __init__(self, M):
+        """
+        Define a Gaussian distribution with zero mean and unit variance. 
+        It can be used as prior base distribution for flow based prior
+
+                Parameters:
+        M: [int] 
+           Dimension of the latent space.
+        """
+        super(GaussianBase, self).__init__()
+        self.M = M
+        self.mean = nn.Parameter(torch.zeros(self.M), requires_grad=False)
+        self.std = nn.Parameter(torch.ones(self.M), requires_grad=False)
+
+    def forward(self):
+        """
+        Return the prior distribution.
+
+        Returns:
+        prior: [torch.distributions.Distribution]
+        """
+        return td.Independent(td.Normal(loc=self.mean, scale=self.std), 1)
+    
+    def log_prob(self, x):
+        return self.forward().log_prob(x)
+    
+
+    
 
 class GaussianMixturePrior(nn.Module): # p(z) = sum_i w_i N(z|locs[i], scales[i])
     def __init__(self, M, categorical_weights = torch.ones(10,), locs = None, scales = None):
@@ -32,20 +71,16 @@ class GaussianMixturePrior(nn.Module): # p(z) = sum_i w_i N(z|locs[i], scales[i]
         super(GaussianMixturePrior, self).__init__()
         # Input arguments
         self.M = M
-        self.categorical_weights = nn.Parameter(categorical_weights, requires_grad=False)
+        self.categorical_weights = nn.Parameter(categorical_weights)
         if locs is not None :
-            self.locs = nn.Parameter(locs, requires_grad=False) # tensor of nb_gaussians loc vectors
+            self.locs = nn.Parameter(locs) # tensor of nb_gaussians loc vectors
         else :
-            self.locs = nn.Parameter(torch.zeros(10,self.M), requires_grad=False)
+            self.locs = nn.Parameter(torch.zeros(10,self.M))
         if scales is not None :    
-            self.scales = nn.Parameter(scales,requires_grad=False) # tensor of nb_gaussians scale vectors
+            self.scales = nn.Parameter(scales) # tensor of nb_gaussians scale vectors
         else :
-            self.scales = nn.Parameter(torch.ones(10,self.M), requires_grad=False)
+            self.scales = nn.Parameter(torch.ones(10,self.M))
         self.nb_gaussians = len(self.locs)
-        # List of Gaussian distributions 
-        self.gaussians = td.Independent(td.Normal(self.locs,self.scales),1) # Batch of nb_gaussians (ex 10) normal diagonal distributions parametrized by the vectors self.locs[i] and self.means[i]
-        self.categorical = td.Categorical(categorical_weights)
-        self.prior = td.MixtureSameFamily(mixture_distribution=self.categorical, component_distribution=self.gaussians)
     
     def get_distribution(self):
         gaussians = td.Independent(td.Normal(self.locs, self.scales), 1)
@@ -64,30 +99,8 @@ class GaussianMixturePrior(nn.Module): # p(z) = sum_i w_i N(z|locs[i], scales[i]
         """
         return self.get_distribution()
 
+    
 
-
-class GaussianPrior(nn.Module): # p(z) = N(0, I)
-    def __init__(self, M):
-        """
-        Define a Gaussian prior distribution with zero mean and unit variance.
-
-                Parameters:
-        M: [int] 
-           Dimension of the latent space.
-        """
-        super(GaussianPrior, self).__init__()
-        self.M = M
-        self.mean = nn.Parameter(torch.zeros(self.M), requires_grad=False)
-        self.std = nn.Parameter(torch.ones(self.M), requires_grad=False)
-
-    def forward(self):
-        """
-        Return the prior distribution.
-
-        Returns:
-        prior: [torch.distributions.Distribution]
-        """
-        return td.Independent(td.Normal(loc=self.mean, scale=self.std), 1)
 
 
 class GaussianEncoder(nn.Module):
@@ -114,6 +127,8 @@ class GaussianEncoder(nn.Module):
         """
         mean, std = torch.chunk(self.encoder_net(x), 2, dim=-1)
         return td.Independent(td.Normal(loc=mean, scale=torch.exp(std)), 1)
+    
+
 
 
 class BernoulliDecoder(nn.Module): # p(x|z) = Bernoulli(logits=decoder_net(z))
@@ -141,6 +156,8 @@ class BernoulliDecoder(nn.Module): # p(x|z) = Bernoulli(logits=decoder_net(z))
         """
         logits = self.decoder_net(z)
         return td.Independent(td.Bernoulli(logits=logits), 2)
+    
+
     
 class MultivariateGaussianDecoder(nn.Module):
     def __init__(self, decoder_net):
@@ -192,6 +209,7 @@ class VAE(nn.Module):
             # Dans le premier terme on passe par un décodeur pour pouvoir mesurer la distance entre la distribution latente (dimension M) et la distribution de la donnée (celle de x)
         else :
             elbo = torch.mean(self.decoder(z).log_prob(torch.flatten(x,start_dim=1)) - td.kl_divergence(q, self.prior()), dim=0) 
+
         return elbo
     
     def elbo_mc(self, x, N_iterations=1): # ELBO(x)=Ez∼qϕ(z∣x)   [lnp(x∣z) + lnp(z) − lnqϕ(z∣x)]
@@ -222,7 +240,7 @@ class VAE(nn.Module):
         n_samples: [int]
            Number of samples to generate.
         """
-        z = self.prior().sample(torch.Size([n_samples]))
+        z = self.prior.sample(torch.Size([n_samples]))
         return self.decoder(z).sample()
     
 
@@ -235,7 +253,7 @@ class VAE(nn.Module):
         return z # z Batch-size tensor of latent data, every data point is represented by a latent vector z sampled from an independant distribution thanks to td.Independant
 
     
-    def forward(self, x, mc):
+    def forward(self, x):
         """
         Compute the negative ELBO for the given batch of data.
 
@@ -243,13 +261,13 @@ class VAE(nn.Module):
         x: [torch.Tensor] 
            A tensor of dimension `(batch_size, feature_dim1, feature_dim2)`
         """
-        if mc == 'Y':
-            return -self.elbo_mc(x)
+        if isinstance(self.prior, GaussianMixturePrior) | isinstance(self.prior, Flow) :
+            return -self.elbo_mc(x) # Monte carlo method 
         else :
             return -self.elbo(x)
 
 
-def train(model, optimizer, data_loader, epochs, device, mc):
+def train(model, optimizer, data_loader, epochs, device, prior, test_loader = None):
     """
     Train a VAE model.
 
@@ -265,28 +283,56 @@ def train(model, optimizer, data_loader, epochs, device, mc):
     device: [torch.device]
         The device to use for training.
     """
-    model.train()
+    
 
-    if mc == 'Y':
+    if prior == 'GM':
         print("ELBO using gaussian mixture prior")
-    else :
+    elif prior == 'Standard' :
         print("ELBO using standard gaussian prior")
+    elif prior == 'Flow' :
+        print("ELBO using Flow based prior")
 
     total_steps = len(data_loader)*epochs
     progress_bar = tqdm(range(total_steps), desc="Training")
-
+    validation_losses = []
+    training_losses = []
     for epoch in range(epochs):
+        model.train()
         data_iter = iter(data_loader)
+        total_training_elbo = 0
+        num_batches = 0
         for x in data_iter:
             x = x[0].to(device)
             optimizer.zero_grad()
-            loss = model(x, mc)
+            loss = model(x)
             loss.backward()
+            total_training_elbo += loss.item()* x.size(0)
+            num_batches +=1
             optimizer.step()
 
             # Update progress bar
             progress_bar.set_postfix(loss=f"⠀{loss.item():12.4f}", epoch=f"{epoch+1}/{epochs}")
             progress_bar.update()
+
+        mean_training_elbo = total_training_elbo / len(data_loader.dataset)
+        training_losses.append(mean_training_elbo)
+
+            
+        model.eval()
+        with torch.no_grad():
+            total_validation_elbo = 0
+            num_batches = 0
+            for x in test_loader:
+                x = x[0].to(device)
+                loss = model(x)
+                total_validation_elbo += loss.item() * x.size(0)                
+                num_batches += 1
+            mean_validation_elbo = total_validation_elbo / len(test_loader.dataset)
+        validation_losses.append(mean_validation_elbo)
+
+    return training_losses, validation_losses
+
+            
 
 def pca_gpu(x, n_components=2):
     """PCA for tensors on GPU"""
@@ -306,15 +352,15 @@ def pca_gpu(x, n_components=2):
 if __name__ == "__main__":
     print("Entering main ...")
     from torchvision import datasets, transforms
-    from torchvision.utils import save_image, make_grid
-    import glob
+    from torchvision.utils import save_image
     import matplotlib.pyplot as plt
-    from Color_mapping import color_mapping
+    from Color_mapping import color_mapping, grid_for_distribution_plot
+    from matplotlib.colors import LogNorm, PowerNorm
 
     # Parse arguments
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', type=str, default='train', choices=['train', 'sample', 'evaluate', 'color-map'], help='what to do when running the script (default: %(default)s)')
+    parser.add_argument('mode', type=str, default='training-curve', choices=['train', 'sample', 'evaluate', 'color-map','training-curve'], help='what to do when running the script (default: %(default)s)')
     parser.add_argument('--model', type=str, default='model.pt', help='file to save model to or load model from (default: %(default)s)')
     parser.add_argument('--samples', type=str, default='samples.png', help='file to save samples in (default: %(default)s)')
     parser.add_argument('--device', type=str, default='mps', choices=['cpu', 'cuda', 'mps'], help='torch device (default: %(default)s)')
@@ -322,7 +368,7 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=10, metavar='N', help='number of epochs to train (default: %(default)s)')
     parser.add_argument('--latent-dim', type=int, default=32, metavar='N', help='dimension of latent variable (default: %(default)s)')
     parser.add_argument('--dataset', type=str, default='bin', metavar='N', choices = ['bin', 'cont'], help='choice of the MNIST data set version  (default: %(default)s)')
-    parser.add_argument('--mc', type=str, default='Y', choices=['Y','N'], metavar='N',help='True : MoG prior, False : Gaussian prior (default: %(default)s)')
+    parser.add_argument('--prior', type=str, default='Standard', choices=['Standard','GM','Flow'], metavar='N',help='Std Gaussian, Gaussian Mixture or Flow based prior (default: %(default)s)')
 
     args = parser.parse_args()
     print('# Options')
@@ -354,12 +400,27 @@ if __name__ == "__main__":
 
     # Define prior distribution
     M = args.latent_dim
-    if args.mc == 'N':
+    if args.prior == 'Standard':
         print("Using standard Gaussian prior")
-        prior = GaussianPrior(M)
-    else :
+        prior = GaussianBase(M)
+    elif args.prior == 'GM' :
         print("Using Gaussian Mixture prior")
         prior = GaussianMixturePrior(M)
+    elif args.prior == 'Flow':
+        num_transformations = 10
+        num_hidden = floor(2*M/3)  # Dimension of hidden layers for scale and translation nets. For latent_dim = 32, num_hidden = 20
+        mask = torch.Tensor([0 if i%2 == 0 else 1 for i in range(M)]) # Checkerboard mask for the permutations in the flow process
+        transformations = []
+        for i in range(num_transformations): 
+            # Flip the mask : permutation layer
+            mask = (1 - mask)
+            # Scale net for transformation i
+            scale_net = nn.Sequential(nn.Linear(M,num_hidden), nn.ReLU(), nn.Linear(num_hidden,M), nn.Tanh())
+            # Translation net for transformation i
+            translation_net = nn.Sequential(nn.Linear(M,num_hidden), nn.ReLU(), nn.Linear(num_hidden,M))
+            transformations.append(MaskedCouplingLayer(scale_net,translation_net,mask))
+
+        prior = Flow(GaussianBase(M),transformations=transformations)
 
     # Define encoder and decoder networks
     encoder_net = nn.Sequential(
@@ -387,11 +448,14 @@ if __name__ == "__main__":
             nn.ReLU(),
             nn.Linear(128, 2*784),
             nn.Unflatten(-1, (2, 784))
+            #nn.Unflatten(-1, (28, 28))
         )
 
     # Define VAE model
-    #decoder = BernoulliDecoder(decoder_net)
-    decoder = MultivariateGaussianDecoder(decoder_net)
+    if args.dataset == 'bin' :
+        decoder = BernoulliDecoder(decoder_net)
+    else :
+        decoder = MultivariateGaussianDecoder(decoder_net)
     encoder = GaussianEncoder(encoder_net)
     model = VAE(prior, decoder, encoder).to(device)
 
@@ -402,12 +466,18 @@ if __name__ == "__main__":
 
         # Train model
         if args.dataset == 'bin':
-            train(model, optimizer, mnist_train_loader, args.epochs, args.device, mc = args.mc)
+            train_losses, validation_losses = train(model, optimizer, mnist_train_loader, args.epochs, args.device, prior = args.prior, test_loader= mnist_test_loader)
         elif args.dataset == 'cont':
-            train(model, optimizer, mnist_train_loader, args.epochs, args.device, mc = args.mc)
+            train_losses, validation_losses = train(model, optimizer, mnist_train_loader, args.epochs, args.device, prior = args.prior, test_loader=mnist_test_loader)
 
         # Save model
         torch.save(model.state_dict(), args.model)
+        
+        # Save performances
+        losses = {'training': train_losses, 'validation' : validation_losses}
+        filename = args.model[:-2] + 'json'
+        with open(filename, "w") as f:
+            json.dump(losses, f, indent=4)
 
     elif args.mode == 'sample':
         model.load_state_dict(torch.load(args.model, map_location=torch.device(args.device)))
@@ -430,7 +500,7 @@ if __name__ == "__main__":
             for x, label in mnist_test_loader:
                 x = x.to(device)
                 # We use directly elbo to have a positive value
-                batch_elbo = model.elbo(x)
+                batch_elbo = model(x)
                 total_elbo += batch_elbo.item()
                 num_batches += 1
                 #print("x shape : ", x.shape)
@@ -439,8 +509,9 @@ if __name__ == "__main__":
         mean_elbo = total_elbo / num_batches # Mean over all batches
         print(f"Averaged ELBO on MNIST test set : {mean_elbo:.4f}", flush=True)
     
-    elif args.mode == "color-map" :
+    elif args.mode == 'color-map' :
         # Loading mnist test-set
+        model.to('cpu')
         model.load_state_dict(torch.load(args.model, map_location=torch.device(args.device)))
         model.eval()
 
@@ -457,21 +528,61 @@ if __name__ == "__main__":
         Labels = torch.flatten(torch.stack(Labels)).numpy()
         Latent_variables = torch.flatten(torch.stack(Latent_variables),end_dim=-2)
 
-        # Perform PCA on the latent variables
-        #transformed_latent = pca_gpu(Latent_variables,n_components=2)
-        pca = PCA(n_components=2)
-        Latent_variables = Latent_variables.cpu().numpy()
-        pca.fit(Latent_variables)
-        # Project the latent variable on the pca space
-        transformed_latent = pca.transform(Latent_variables) 
-        # Explained variance
-        print("Explained variance from the pca on the latent variables : ", pca.explained_variance_ratio_)
+        if args.latent_dim != 2:
 
-        color_mapping(transformed_latent, Labels)
-        
-        # + PCA
-        #pca = model.aggregated_posterior_sample(mnist_test_loader.flatten())
-        #print("\nExplained variance from latent space : ", pca.explained_variance_ratio_,"\n")
+            # Perform PCA on the latent variables
+            #transformed_latent = pca_gpu(Latent_variables,n_components=2)
+            pca = PCA(n_components=2)
+            Latent_variables = Latent_variables.cpu().numpy()
+            pca.fit(Latent_variables)
+            # Project the latent variable on the pca space
+            transformed_latent = pca.transform(Latent_variables) 
+            # Explained variance
+            print("Explained variance from the pca on the latent variables : ", pca.explained_variance_ratio_)
+        else : 
+            transformed_latent = Latent_variables
+        print("shape of transformed latent : ",transformed_latent.shape)
+        minx = transformed_latent[:,0].min()
+        maxx = transformed_latent[:,0].max()
+        miny = transformed_latent[:,1].min()
+        maxy = transformed_latent[:,1].max()
+        limx = max(-minx,maxx)
+        limy = max(-miny,maxy)
+        min = min(minx,miny)
+        max = max(maxx,maxy)
+        prior_grid = grid_for_distribution_plot(dist = model.prior, latent_dim=args.latent_dim, min = min , max = max)
+
+        print(model.prior)
+
+        plt.figure(figsize=(6, 5))
+        plt.imshow(prior_grid.detach().numpy(), origin='lower',extent=[min, max, min, max], norm = PowerNorm(gamma=0.2), cmap='viridis')
+        plt.colorbar(label='Density')
+        plt.xlabel("z1")
+        plt.ylabel("z2")
+        plt.scatter(transformed_latent[:,0], transformed_latent[:,1],alpha = 0.5,s = 0.5,marker = 'o',c='black')
+        plt.show()
+
+
+
+        # color_mapping(transformed_latent, Labels)
+
+    elif args.mode == 'training-curve' :
+        filename = "03_bs32_ep20_lat-dim20_priorFlow.json"
+        with open(filename, "r") as f:
+            losses = json.load(f)
+        training_losses = np.array(losses['training'])
+        validation_losses =  np.array(losses['validation'])
+        num_epochs = len(training_losses)
+        epochs = np.array([i for i in range(1,num_epochs+1)])
+        plt.plot(epochs, training_losses, c = 'orange', label = "training loss")
+        plt.plot(epochs, validation_losses, c = 'blue', label = "validation loss")
+        plt.title("ELBO training and validation losses vs epochs")
+        plt.xlabel("epochs")
+        plt.ylabel("ELBO loss")
+        plt.legend()
+        plt.show()
+            
+
 
     else : 
         print("On ne rentre dans aucun if/elif", flush=True)

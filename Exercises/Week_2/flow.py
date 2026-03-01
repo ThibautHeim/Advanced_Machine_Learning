@@ -99,7 +99,7 @@ class MaskedCouplingLayer(nn.Module):
         return z, -log_det_J
 
 
-class Flow(nn.Module):
+class Flow(nn.Module): # THIS IS A TEST
     def __init__(self, base, transformations):
         """
         Define a normalizing flow model.
@@ -168,7 +168,7 @@ class Flow(nn.Module):
         z, log_det_J = self.inverse(x)
         return self.base().log_prob(z) + log_det_J
     
-    def sample(self, sample_shape=(1,)):
+    def sample(self, sample_shape=torch.Size([1,])): # sample_shape replaced by n_samples
         """
         Sample from the flow.
 
@@ -179,7 +179,7 @@ class Flow(nn.Module):
         z: [torch.Tensor]
             The samples of dimension `(n_samples, feature_dim)`
         """
-        z = self.base().sample(sample_shape)
+        z = self.base().sample(sample_shape=sample_shape)
         return self.forward(z)[0]
     
     def loss(self, x):
@@ -304,11 +304,14 @@ if __name__ == "__main__":
         if args.mask == 'rd' :
             mask = torch.randint(0,2,(D,))
         mask = (1-mask) # Flip the mask
+
         if args.dataset == 'toy' :
             scale_net = nn.Sequential(nn.Linear(D, num_hidden), nn.ReLU(), nn.Linear(num_hidden, D))
         elif args.dataset == 'mnist' :
-            scale_net = nn.Sequential(nn.Linear(D, num_hidden), nn.ReLU(), nn.Linear(num_hidden, D), nn.Tanh())
+            scale_net = nn.Sequential(nn.Linear(D, num_hidden), nn.ReLU(), nn.Linear(num_hidden, D), nn.Tanh()) # Add Tanh for stability
+
         translation_net = nn.Sequential(nn.Linear(D, num_hidden), nn.ReLU(), nn.Linear(num_hidden, D))
+        
         transformations.append(MaskedCouplingLayer(scale_net, translation_net, mask))
 
     # Define flow model
