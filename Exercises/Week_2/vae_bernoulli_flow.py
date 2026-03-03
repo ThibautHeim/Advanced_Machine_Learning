@@ -267,7 +267,7 @@ class VAE(nn.Module):
             return -self.elbo(x)
 
 
-def train(model, optimizer, data_loader, epochs, device, prior, test_loader = None):
+def train(model, optimizer, data_loader, epochs, device, prior, test_loader = None, validation = False):
     """
     Train a VAE model.
 
@@ -294,43 +294,48 @@ def train(model, optimizer, data_loader, epochs, device, prior, test_loader = No
 
     total_steps = len(data_loader)*epochs
     progress_bar = tqdm(range(total_steps), desc="Training")
-    validation_losses = []
-    training_losses = []
+    if validation :
+        validation_losses = []
+        training_losses = []
     for epoch in range(epochs):
         model.train()
         data_iter = iter(data_loader)
-        total_training_elbo = 0
-        num_batches = 0
+        if validation :
+            total_training_elbo = 0
+            num_batches = 0
         for x in data_iter:
             x = x[0].to(device)
             optimizer.zero_grad()
             loss = model(x)
             loss.backward()
-            total_training_elbo += loss.item()* x.size(0)
-            num_batches +=1
+            if validation :
+                total_training_elbo += loss.item()* x.size(0)
+                num_batches +=1
             optimizer.step()
 
             # Update progress bar
             progress_bar.set_postfix(loss=f"⠀{loss.item():12.4f}", epoch=f"{epoch+1}/{epochs}")
             progress_bar.update()
 
-        mean_training_elbo = total_training_elbo / len(data_loader.dataset)
-        training_losses.append(mean_training_elbo)
+        if validation :
+            mean_training_elbo = total_training_elbo / len(data_loader.dataset)
+            training_losses.append(mean_training_elbo)
 
-            
-        model.eval()
-        with torch.no_grad():
-            total_validation_elbo = 0
-            num_batches = 0
-            for x in test_loader:
-                x = x[0].to(device)
-                loss = model(x)
-                total_validation_elbo += loss.item() * x.size(0)                
-                num_batches += 1
-            mean_validation_elbo = total_validation_elbo / len(test_loader.dataset)
-        validation_losses.append(mean_validation_elbo)
+                
+            model.eval()
+            with torch.no_grad():
+                total_validation_elbo = 0
+                num_batches = 0
+                for x in test_loader:
+                    x = x[0].to(device)
+                    loss = model(x)
+                    total_validation_elbo += loss.item() * x.size(0)                
+                    num_batches += 1
+                mean_validation_elbo = total_validation_elbo / len(test_loader.dataset)
+            validation_losses.append(mean_validation_elbo)
 
-    return training_losses, validation_losses
+    if validation :
+        return training_losses, validation_losses
 
             
 
@@ -369,6 +374,7 @@ if __name__ == "__main__":
     parser.add_argument('--latent-dim', type=int, default=32, metavar='N', help='dimension of latent variable (default: %(default)s)')
     parser.add_argument('--dataset', type=str, default='bin', metavar='N', choices = ['bin', 'cont'], help='choice of the MNIST data set version  (default: %(default)s)')
     parser.add_argument('--prior', type=str, default='Standard', choices=['Standard','GM','Flow'], metavar='N',help='Std Gaussian, Gaussian Mixture or Flow based prior (default: %(default)s)')
+    parser.add_argument('--validation', type=bool, default=False, metavar='N',help='Whether to compute validation loss (default: %(default)s)')
 
     args = parser.parse_args()
     print('# Options')
@@ -466,18 +472,26 @@ if __name__ == "__main__":
 
         # Train model
         if args.dataset == 'bin':
-            train_losses, validation_losses = train(model, optimizer, mnist_train_loader, args.epochs, args.device, prior = args.prior, test_loader= mnist_test_loader)
+            if args.validation :
+                train_losses, validation_losses = train(model, optimizer, mnist_train_loader, args.epochs, args.device, prior = args.prior, test_loader= mnist_test_loader, validation = args.validation)
+            else :
+                train(model, optimizer, mnist_train_loader, args.epochs, args.device, prior = args.prior, test_loader= mnist_test_loader, validation = args.validation)
+
         elif args.dataset == 'cont':
-            train_losses, validation_losses = train(model, optimizer, mnist_train_loader, args.epochs, args.device, prior = args.prior, test_loader=mnist_test_loader)
+            if args.validation : 
+                train_losses, validation_losses = train(model, optimizer, mnist_train_loader, args.epochs, args.device, prior = args.prior, test_loader=mnist_test_loader, validation=args.validation)
+            else :
+                train(model, optimizer, mnist_train_loader, args.epochs, args.device, prior = args.prior, test_loader=mnist_test_loader, validation=args.validation)
 
         # Save model
         torch.save(model.state_dict(), args.model)
         
-        # Save performances
-        losses = {'training': train_losses, 'validation' : validation_losses}
-        filename = args.model[:-2] + 'json'
-        with open(filename, "w") as f:
-            json.dump(losses, f, indent=4)
+        if args.validation :
+            # Save performances
+            losses = {'training': train_losses, 'validation' : validation_losses}
+            filename = args.model[:-2] + 'json'
+            with open(filename, "w") as f:
+                json.dump(losses, f, indent=4)
 
     elif args.mode == 'sample':
         model.load_state_dict(torch.load(args.model, map_location=torch.device(args.device)))
@@ -567,7 +581,7 @@ if __name__ == "__main__":
         # color_mapping(transformed_latent, Labels)
 
     elif args.mode == 'training-curve' :
-        filename = "03_bs32_ep20_lat-dim20_priorFlow.json"
+        filename = "Prior_2D_Flow.json"
         with open(filename, "r") as f:
             losses = json.load(f)
         training_losses = np.array(losses['training'])
