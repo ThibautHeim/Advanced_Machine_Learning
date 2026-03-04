@@ -16,9 +16,11 @@ from sklearn.decomposition import PCA
 import numpy as np
 from math import floor
 import json
+import os
 
 # Flow related classes
 from flow import MaskedCouplingLayer, Flow
+
 
 
 
@@ -484,12 +486,17 @@ if __name__ == "__main__":
                 train(model, optimizer, mnist_train_loader, args.epochs, args.device, prior = args.prior, test_loader=mnist_test_loader, validation=args.validation)
 
         # Save model
-        torch.save(model.state_dict(), args.model)
+        # Save in the directory OUT :
+
+        out_dir = "OUT"
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+        torch.save(model.state_dict(), os.path.join(out_dir, os.path.basename(args.model)))
         
         if args.validation :
             # Save performances
             losses = {'training': train_losses, 'validation' : validation_losses}
-            filename = args.model[:-2] + 'json'
+            filename = os.path.join(out_dir, os.path.basename(args.model)[:-2] + 'json')
             with open(filename, "w") as f:
                 json.dump(losses, f, indent=4)
 
